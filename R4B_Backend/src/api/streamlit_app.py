@@ -81,7 +81,7 @@ if submit and query:
             }
             
             wf_response = requests.post(
-                "http://54.177.90.163:8000/jobs/query",
+                f"{os.getenv('BACKEND_URL', 'http://0.0.0.0:0000')}/jobs/query",
                 json=request_data,
                 timeout=300  # Increased timeout to 300 seconds (5 minutes)
             )
