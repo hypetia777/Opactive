@@ -359,7 +359,7 @@ with st.sidebar:
     - Faster results with comprehensive data coverage
 
     ### 🛠 Troubleshooting:
-    - Is the backend running? ({settings.fastapi_backend_url})
-    - Are all MCP servers running? (BLS:{settings.mcp_server_external_host}:{settings.mcp_bls_server_port}, Salary:{settings.mcp_server_external_host}:{settings.mcp_salary_server_port}, Scraping:{settings.mcp_server_external_host}:{settings.mcp_scraping_server_port})
+    - If no data appears, try rephrasing your query
+    - Ensure job titles and locations are valid
     - Are you connected to the internet?
     """)
