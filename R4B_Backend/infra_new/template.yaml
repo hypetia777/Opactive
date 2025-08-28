@@ -1,0 +1,1514 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: |
+  Complete OpActive R4B Microservices Infrastructure
+  - 5 Container deployment (BLS, Salary, FastAPI, Streamlit, Scraping)
+  - Full service discovery and load balancing
+  - Production-ready monitoring and scaling
+  - Compatible with existing Docker Compose setup
+
+Parameters:
+  # =============================================================================
+  # DEPLOYMENT CONFIGURATION
+  # =============================================================================
+  AppName:
+    Type: String
+    Description: Name of the application
+    Default: R4B-OpActive
+
+  AppStage:
+    Type: String
+    Description: Deployment stage (demo, dev, staging, prod)
+    Default: demo
+    AllowedValues: [demo, dev, staging, prod]
+
+  # =============================================================================
+  # NETWORK CONFIGURATION (Import from AccountLevel)
+  # =============================================================================
+  VPCStackName:
+    Type: String
+    Description: Name of the existing VPC CloudFormation stack
+    Default: "R4B-VPC-Main"
+
+  VPCStackAppName:
+    Type: String
+    Description: AppName used in VPC stack exports
+    Default: "R4B-VPC"
+
+  VPCStackStage:
+    Type: String
+    Description: Stage used in VPC stack exports
+    Default: "main"
+
+  # =============================================================================
+  # CONTAINER IMAGE CONFIGURATION
+  # =============================================================================
+  ECRRepository:
+    Type: String
+    Description: Base ECR repository URI (without image name)
+    Default: 331894608576.dkr.ecr.us-west-1.amazonaws.com/opactive
+
+  ImageTag:
+    Type: String
+    Description: Docker image tag to deploy
+    Default: latest
+
+  # =============================================================================
+  # ENVIRONMENT VARIABLES - All 25+ variables from Docker Compose
+  # =============================================================================
+  
+  # OpenAI Configuration
+  OpenAIAPIKey:
+    Type: String
+    Description: OpenAI API Key
+    NoEcho: true
+    Default: ""
+
+  OpenAIModel:
+    Type: String
+    Description: OpenAI model to use
+    Default: gpt-4o
+
+  OpenAIBaseURL:
+    Type: String
+    Description: OpenAI base URL override
+    Default: ""
+
+  OpenAIMaxTokens:
+    Type: String
+    Description: OpenAI max tokens per request
+    Default: "512"
+
+  OpenAITemperature:
+    Type: String
+    Description: OpenAI temperature setting
+    Default: "0.7"
+
+  # Ollama Configuration (Fallback)
+  OllamaBaseURL:
+    Type: String
+    Description: Ollama server base URL
+    Default: ""
+
+  OllamaModel:
+    Type: String
+    Description: Ollama model to use
+    Default: ollama/llama3.2
+
+  OllamaMaxTokens:
+    Type: String
+    Description: Ollama max tokens per request
+    Default: "512"
+
+  # Salary.com Credentials
+  SalaryComUsername:
+    Type: String
+    Description: Salary.com username
+    Default: jessicavu@opactive.com
+
+  SalaryComPassword:
+    Type: String
+    Description: Salary.com password
+    NoEcho: true
+    Default: Compensationnew2025!
+
+  SalaryComLoginURL:
+    Type: String
+    Description: Salary.com login URL
+    Default: https://companalyst.salary.com/CompAnalyst/Cloud
+
+  # CAPTCHA API Configuration
+  APIKey2Captcha:
+    Type: String
+    Description: 2captcha API key
+    NoEcho: true
+    Default: ""
+
+  # External Service URLs
+  IndeedBaseURL:
+    Type: String
+    Description: Indeed website base URL
+    Default: https://www.indeed.com
+
+  Captcha2CaptchaSubmitURL:
+    Type: String
+    Description: 2captcha submit URL
+    Default: http://2captcha.com/in.php
+
+  Captcha2CaptchaResultURL:
+    Type: String
+    Description: 2captcha result URL
+    Default: http://2captcha.com/res.php
+
+  # MCP Client Timeout Configuration
+  MCPClientTimeout:
+    Type: String
+    Description: MCP client total timeout in seconds
+    Default: "600"
+
+  MCPConnectionTimeout:
+    Type: String
+    Description: MCP client connection timeout in seconds
+    Default: "60"
+
+  MCPReadTimeout:
+    Type: String
+    Description: MCP client read timeout in seconds
+    Default: "300"
+
+Conditions:
+  # Always use existing VPC infrastructure from AccountLevel stack
+  UseExistingVPC: !Not [!Equals [!Ref VPCStackName, ""]]
+
+Resources:
+  # =============================================================================
+  # PHASE 3: CONTAINER INFRASTRUCTURE
+  # =============================================================================
+  
+  # ECR Repositories for all 5 containers
+  BLSRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${AppName}/bls-server"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-bls-repository"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  SalaryRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${AppName}/salary-server"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-salary-repository"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  FastAPIRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${AppName}/fastapi-server"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-fastapi-repository"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  StreamlitRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${AppName}/streamlit-ui"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-streamlit-repository"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  ScrapingRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${AppName}/scraping-server"
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-scraping-repository"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # CloudWatch Log Groups for all services
+  BLSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AppName}-${AppStage}-bls-service"
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-bls-logs"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  SalaryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AppName}-${AppStage}-salary-service"
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-salary-logs"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  FastAPILogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AppName}-${AppStage}-fastapi-service"
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-fastapi-logs"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  StreamlitLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AppName}-${AppStage}-streamlit-service"
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-streamlit-logs"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  ScrapingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AppName}-${AppStage}-scraping-service"
+      RetentionInDays: 14
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-scraping-logs"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AppName}-${AppStage}-cluster"
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-cluster"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # IAM Roles for ECS
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${AppStage}-ecs-execution-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: "*"
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-ecs-execution-role"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AppName}-${AppStage}-ecs-task-role"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AppAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                  - ssm:GetParametersByPath
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-ecs-task-role"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Service Discovery Namespace
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub "${AppName}-${AppStage}.local"
+      Vpc: !ImportValue 
+        Fn::Sub: "${VPCStackAppName}${VPCStackStage}-VpcId"
+      Description: !Sub "Service discovery for ${AppName} ${AppStage} services"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-service-discovery"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # =============================================================================
+  # TASK DEFINITIONS - All 5 Containers with Complete Configuration
+  # =============================================================================
+
+  # BLS Server Task Definition
+  BLSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AppName}-${AppStage}-bls-task"
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: bls-container
+          Image: !Sub "${BLSRepository.RepositoryUri}:${ImageTag}"
+          PortMappings:
+            - ContainerPort: 9003
+              Protocol: tcp
+          Environment:
+            - Name: MCP_BLS_SERVER_PORT
+              Value: "9003"
+            - Name: MCP_SERVER_BIND_HOST
+              Value: "0.0.0.0"
+            - Name: MCP_BLS_HOST
+              Value: "bls-server"
+            - Name: LOG_LEVEL
+              Value: "INFO"
+            - Name: LOG_PATH
+              Value: "./logs"
+            - Name: DATA_EXPORT_PATH
+              Value: "./data/exports"
+            - Name: CACHE_PATH
+              Value: "./data/cache"
+          Essential: true
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost:9003/health || exit 1"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 10
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref BLSLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: bls
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-bls-task"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Salary Server Task Definition (with Chrome support)
+  SalaryTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AppName}-${AppStage}-salary-task"
+      Cpu: 1024
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: salary-container
+          Image: !Sub "${SalaryRepository.RepositoryUri}:${ImageTag}"
+          PortMappings:
+            - ContainerPort: 9004
+              Protocol: tcp
+          # Chrome support - Shared memory
+          LinuxParameters:
+            SharedMemorySize: 2048
+          Environment:
+            - Name: MCP_SALARY_SERVER_PORT
+              Value: "9004"
+            - Name: MCP_SERVER_BIND_HOST
+              Value: "0.0.0.0"
+            - Name: MCP_SALARY_HOST
+              Value: "salary-server"
+            - Name: SALARY_COM_USERNAME
+              Value: !Ref SalaryComUsername
+            - Name: SALARY_COM_PASSWORD
+              Value: !Ref SalaryComPassword
+            - Name: SALARY_COM_LOGIN_URL
+              Value: !Ref SalaryComLoginURL
+            - Name: LOG_LEVEL
+              Value: "INFO"
+            - Name: LOG_PATH
+              Value: "./logs"
+            - Name: DATA_EXPORT_PATH
+              Value: "./data/exports"
+            - Name: CACHE_PATH
+              Value: "./data/cache"
+          Essential: true
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost:9004/health || exit 1"
+            Interval: 30
+            Timeout: 10
+            Retries: 3
+            StartPeriod: 15
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref SalaryLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: salary
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-salary-task"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # FastAPI Server Task Definition
+  FastAPITaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AppName}-${AppStage}-fastapi-task"
+      Cpu: 512
+      Memory: 1024
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: fastapi-container
+          Image: !Sub "${FastAPIRepository.RepositoryUri}:${ImageTag}"
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: FASTAPI_BIND_HOST
+              Value: "0.0.0.0"
+            - Name: FASTAPI_PORT
+              Value: "8000"
+            - Name: FASTAPI_EXTERNAL_HOST
+              Value: "fastapi-server"
+            - Name: MCP_BLS_HOST
+              Value: "bls-server"
+            - Name: MCP_SALARY_HOST
+              Value: "salary-server"
+            - Name: MCP_SCRAPING_HOST
+              Value: "scraping-server"
+            - Name: MCP_BLS_SERVER_PORT
+              Value: "9003"
+            - Name: MCP_SALARY_SERVER_PORT
+              Value: "9004"
+            - Name: MCP_SCRAPING_SERVER_PORT
+              Value: "9002"
+            - Name: MCP_CLIENT_TIMEOUT
+              Value: !Ref MCPClientTimeout
+            - Name: MCP_CONNECTION_TIMEOUT
+              Value: !Ref MCPConnectionTimeout
+            - Name: MCP_READ_TIMEOUT
+              Value: !Ref MCPReadTimeout
+            - Name: OPENAI_API_KEY
+              Value: !Ref OpenAIAPIKey
+            - Name: OPENAI_MODEL
+              Value: !Ref OpenAIModel
+            - Name: OPENAI_BASE_URL
+              Value: !Ref OpenAIBaseURL
+            - Name: OPENAI_MAX_TOKENS
+              Value: !Ref OpenAIMaxTokens
+            - Name: OPENAI_TEMPERATURE
+              Value: !Ref OpenAITemperature
+            - Name: OLLAMA_BASE_URL
+              Value: !Ref OllamaBaseURL
+            - Name: OLLAMA_MODEL
+              Value: !Ref OllamaModel
+            - Name: OLLAMA_MAX_TOKENS
+              Value: !Ref OllamaMaxTokens
+            - Name: LOG_LEVEL
+              Value: "INFO"
+            - Name: LOG_PATH
+              Value: "./data/logs"
+            - Name: DATA_EXPORT_PATH
+              Value: "./data/exports"
+            - Name: CACHE_PATH
+              Value: "./data/cache"
+          Command:
+            - uvicorn
+            - main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --reload
+          Essential: true
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost:8000/jobs/health || exit 1"
+            Interval: 30
+            Timeout: 10
+            Retries: 3
+            StartPeriod: 20
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref FastAPILogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: fastapi
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-fastapi-task"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Streamlit UI Task Definition
+  StreamlitTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AppName}-${AppStage}-streamlit-task"
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: streamlit-container
+          Image: !Sub "${StreamlitRepository.RepositoryUri}:${ImageTag}"
+          PortMappings:
+            - ContainerPort: 8501
+              Protocol: tcp
+          Environment:
+            - Name: FASTAPI_EXTERNAL_HOST
+              Value: "fastapi-server"
+            - Name: FASTAPI_PORT
+              Value: "8000"
+            - Name: STREAMLIT_HOST
+              Value: "0.0.0.0"
+            - Name: STREAMLIT_PORT
+              Value: "8501"
+            - Name: MCP_BLS_HOST
+              Value: "bls-server"
+            - Name: MCP_SALARY_HOST
+              Value: "salary-server"
+            - Name: MCP_SCRAPING_HOST
+              Value: "scraping-server"
+            - Name: MCP_BLS_SERVER_PORT
+              Value: "9003"
+            - Name: MCP_SALARY_SERVER_PORT
+              Value: "9004"
+            - Name: MCP_SCRAPING_SERVER_PORT
+              Value: "9002"
+            - Name: LOG_LEVEL
+              Value: "INFO"
+          Essential: true
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost:8501/ || exit 1"
+            Interval: 30
+            Timeout: 10
+            Retries: 3
+            StartPeriod: 15
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref StreamlitLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: streamlit
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-streamlit-task"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Scraping Server Task Definition (with Chrome support)
+  ScrapingTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AppName}-${AppStage}-scraping-task"
+      Cpu: 1024
+      Memory: 2048
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: scraping-container
+          Image: !Sub "${ScrapingRepository.RepositoryUri}:${ImageTag}"
+          PortMappings:
+            - ContainerPort: 9002
+              Protocol: tcp
+          # Chrome support - Shared memory
+          LinuxParameters:
+            SharedMemorySize: 2048
+          Environment:
+            - Name: MCP_SCRAPING_SERVER_PORT
+              Value: "9002"
+            - Name: MCP_SERVER_BIND_HOST
+              Value: "0.0.0.0"
+            - Name: MCP_SCRAPING_HOST
+              Value: "scraping-server"
+            - Name: APIKEY_2CAPTCHA
+              Value: !Ref APIKey2Captcha
+            - Name: INDEED_BASE_URL
+              Value: !Ref IndeedBaseURL
+            - Name: CAPTCHA_2CAPTCHA_SUBMIT_URL
+              Value: !Ref Captcha2CaptchaSubmitURL
+            - Name: CAPTCHA_2CAPTCHA_RESULT_URL
+              Value: !Ref Captcha2CaptchaResultURL
+            - Name: LOG_LEVEL
+              Value: "INFO"
+            - Name: LOG_PATH
+              Value: "./logs"
+            - Name: DATA_EXPORT_PATH
+              Value: "./data/exports"
+            - Name: CACHE_PATH
+              Value: "./data/cache"
+          Essential: true
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost:9002/health || exit 1"
+            Interval: 30
+            Timeout: 10
+            Retries: 3
+            StartPeriod: 15
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ScrapingLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: scraping
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-scraping-task"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # =============================================================================
+  # PHASE 4: LOAD BALANCER SETUP
+  # =============================================================================
+
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${AppName}-${AppStage}-alb"
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      Subnets:
+        - !ImportValue 
+          Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PublicSubnetId"
+        # For demo deployment, we only have one public subnet
+        # In production, you'd add a second subnet in different AZ
+      SecurityGroups:
+        - !ImportValue 
+          Fn::Sub: "${VPCStackAppName}${VPCStackStage}-ALBSecurityGroupId"
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+        - Key: access_logs.s3.enabled
+          Value: "false"  # Enable for production
+        - Key: deletion_protection.enabled
+          Value: "false"  # Enable for production
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-alb"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Target Group for FastAPI (API endpoints)
+  FastAPITargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${AppName}-${AppStage}-fastapi-tg"
+      Port: 8000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue 
+        Fn::Sub: "${VPCStackAppName}${VPCStackStage}-VpcId"
+      HealthCheckPath: /jobs/health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+        - Key: stickiness.enabled
+          Value: "false"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-fastapi-tg"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Target Group for Streamlit (UI)
+  StreamlitTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${AppName}-${AppStage}-streamlit-tg"
+      Port: 8501
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue 
+        Fn::Sub: "${VPCStackAppName}${VPCStackStage}-VpcId"
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200
+      # Sticky sessions for Streamlit state management
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: "30"
+        - Key: stickiness.enabled
+          Value: "true"
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: "86400"  # 24 hours
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-streamlit-tg"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # ALB Listener (HTTP)
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref StreamlitTargetGroup
+
+  # Listener Rule for API traffic (/api/* and /docs*)
+  ALBListenerRuleAPI:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListener
+      Priority: 1
+      Conditions:
+        - Field: path-pattern
+          Values: 
+            - "/api/*"
+            - "/docs*"
+            - "/redoc*"
+            - "/openapi.json"
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref FastAPITargetGroup
+
+  # Service Discovery Services
+  BLSServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: bls-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 300
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-bls-discovery"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  SalaryServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: salary-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 300
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-salary-discovery"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  FastAPIServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: fastapi-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 300
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-fastapi-discovery"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  StreamlitServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: streamlit-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 300
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-streamlit-discovery"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  ScrapingServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: scraping-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 300
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-scraping-discovery"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # =============================================================================
+  # PHASE 5: SERVICE DEPLOYMENT - All 5 ECS Services
+  # =============================================================================
+
+  # BLS Service (Internal - starts first)
+  BLSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: bls-service
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref BLSTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateServicesSecurityGroupId"
+          Subnets:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateSubnet1Id"
+      ServiceRegistries:
+        - RegistryArn: !GetAtt BLSServiceDiscovery.Arn
+      EnableExecuteCommand: true  # For debugging
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-bls-service"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Salary Service (Internal - starts first, parallel with BLS)
+  SalaryService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: salary-service
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref SalaryTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateServicesSecurityGroupId"
+          Subnets:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateSubnet1Id"
+      ServiceRegistries:
+        - RegistryArn: !GetAtt SalaryServiceDiscovery.Arn
+      EnableExecuteCommand: true  # For debugging
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-salary-service"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Scraping Service (Internal - starts first, parallel with BLS and Salary)
+  ScrapingService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: scraping-service
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref ScrapingTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateServicesSecurityGroupId"
+          Subnets:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateSubnet1Id"
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ScrapingServiceDiscovery.Arn
+      EnableExecuteCommand: true  # For debugging
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-scraping-service"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # FastAPI Service (Public via ALB - depends on internal services)
+  FastAPIService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ALBListener
+      - BLSService
+      - SalaryService
+      - ScrapingService
+    Properties:
+      ServiceName: fastapi-service
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref FastAPITaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PublicServicesSecurityGroupId"
+          Subnets:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateSubnet1Id"
+      LoadBalancers:
+        - ContainerName: fastapi-container
+          ContainerPort: 8000
+          TargetGroupArn: !Ref FastAPITargetGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt FastAPIServiceDiscovery.Arn
+      EnableExecuteCommand: true  # For debugging
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-fastapi-service"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # Streamlit Service (Public via ALB - depends on FastAPI)
+  StreamlitService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - ALBListener
+      - FastAPIService
+    Properties:
+      ServiceName: streamlit-service
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: 1
+      TaskDefinition: !Ref StreamlitTaskDefinition
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PublicServicesSecurityGroupId"
+          Subnets:
+            - !ImportValue 
+              Fn::Sub: "${VPCStackAppName}${VPCStackStage}-PrivateSubnet1Id"
+      LoadBalancers:
+        - ContainerName: streamlit-container
+          ContainerPort: 8501
+          TargetGroupArn: !Ref StreamlitTargetGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt StreamlitServiceDiscovery.Arn
+      EnableExecuteCommand: true  # For debugging
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AppName}-${AppStage}-streamlit-service"
+        - Key: Environment
+          Value: !Ref AppStage
+
+  # =============================================================================
+  # PHASE 7: MONITORING & SCALING
+  # =============================================================================
+
+  # CloudWatch Dashboard
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${AppName}-${AppStage}-Dashboard"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/ECS", "CPUUtilization", "ServiceName", "bls-service", "ClusterName", "${ECSCluster}"],
+                  [".", "MemoryUtilization", ".", ".", ".", "."],
+                  [".", "CPUUtilization", ".", "salary-service", ".", "."],
+                  [".", "MemoryUtilization", ".", ".", ".", "."],
+                  [".", "CPUUtilization", ".", "fastapi-service", ".", "."],
+                  [".", "MemoryUtilization", ".", ".", ".", "."],
+                  [".", "CPUUtilization", ".", "streamlit-service", ".", "."],
+                  [".", "MemoryUtilization", ".", ".", ".", "."],
+                  [".", "CPUUtilization", ".", "scraping-service", ".", "."],
+                  [".", "MemoryUtilization", ".", ".", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "ECS Service Performance",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}"],
+                  [".", "TargetResponseTime", ".", "."],
+                  [".", "HTTPCode_Target_2XX_Count", ".", "."],
+                  [".", "HTTPCode_Target_4XX_Count", ".", "."],
+                  [".", "HTTPCode_Target_5XX_Count", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Load Balancer Metrics"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  ["AWS/ECS", "RunningTaskCount", "ServiceName", "bls-service", "ClusterName", "${ECSCluster}"],
+                  [".", ".", ".", "salary-service", ".", "."],
+                  [".", ".", ".", "fastapi-service", ".", "."],
+                  [".", ".", ".", "streamlit-service", ".", "."],
+                  [".", ".", ".", "scraping-service", ".", "."]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Running Task Counts",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 5
+                  }
+                }
+              }
+            }
+          ]
+        }
+
+  # Auto Scaling for FastAPI Service (public-facing)
+  FastAPIAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub "service/${ECSCluster}/${FastAPIService.Name}"
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: 1
+      MaxCapacity: 5
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+
+  FastAPIAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub "${AppName}-${AppStage}-fastapi-scaling-policy"
+      PolicyType: TargetTrackingScaling
+      ServiceNamespace: ecs
+      ResourceId: !Sub "service/${ECSCluster}/${FastAPIService.Name}"
+      ScalableDimension: ecs:service:DesiredCount
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 50.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleOutCooldown: 300
+        ScaleInCooldown: 300
+
+  # Auto Scaling for Streamlit Service (public-facing)
+  StreamlitAutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub "service/${ECSCluster}/${StreamlitService.Name}"
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: 1
+      MaxCapacity: 3
+      RoleARN: !Sub "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService"
+
+  StreamlitAutoScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub "${AppName}-${AppStage}-streamlit-scaling-policy"
+      PolicyType: TargetTrackingScaling
+      ServiceNamespace: ecs
+      ResourceId: !Sub "service/${ECSCluster}/${StreamlitService.Name}"
+      ScalableDimension: ecs:service:DesiredCount
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleOutCooldown: 300
+        ScaleInCooldown: 300
+
+  # CloudWatch Alarms for monitoring
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AppName}-${AppStage}-HighCPU"
+      AlarmDescription: "High CPU utilization on ECS services"
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      TreatMissingData: notBreaching
+
+  ServiceHealthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AppName}-${AppStage}-ServiceHealth"
+      AlarmDescription: "ECS services are not running"
+      MetricName: RunningTaskCount
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      TreatMissingData: breaching
+
+Outputs:
+  # =============================================================================
+  # APPLICATION ACCESS INFORMATION
+  # =============================================================================
+  
+  ApplicationURL:
+    Description: "Main application URL (Streamlit UI)"
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-ApplicationURL"
+
+  APIURL:
+    Description: "API documentation URL"
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}/docs"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-APIURL"
+
+  LoadBalancerDNS:
+    Description: "Application Load Balancer DNS name"
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-LoadBalancerDNS"
+
+  # =============================================================================
+  # INFRASTRUCTURE INFORMATION
+  # =============================================================================
+
+  ECSClusterName:
+    Description: "ECS Cluster name"
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-ECSClusterName"
+
+  ServiceDiscoveryNamespace:
+    Description: "Service Discovery namespace"
+    Value: !Ref ServiceDiscoveryNamespace
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-ServiceDiscoveryNamespace"
+
+  # =============================================================================
+  # ECR REPOSITORY INFORMATION
+  # =============================================================================
+
+  BLSRepositoryURI:
+    Description: "BLS Server ECR repository URI"
+    Value: !Sub "${BLSRepository.RepositoryUri}"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-BLSRepositoryURI"
+
+  SalaryRepositoryURI:
+    Description: "Salary Server ECR repository URI"
+    Value: !Sub "${SalaryRepository.RepositoryUri}"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-SalaryRepositoryURI"
+
+  FastAPIRepositoryURI:
+    Description: "FastAPI Server ECR repository URI"
+    Value: !Sub "${FastAPIRepository.RepositoryUri}"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-FastAPIRepositoryURI"
+
+  StreamlitRepositoryURI:
+    Description: "Streamlit UI ECR repository URI"
+    Value: !Sub "${StreamlitRepository.RepositoryUri}"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-StreamlitRepositoryURI"
+
+  ScrapingRepositoryURI:
+    Description: "Scraping Server ECR repository URI"
+    Value: !Sub "${ScrapingRepository.RepositoryUri}"
+    Export:
+      Name: !Sub "${AppName}-${AppStage}-ScrapingRepositoryURI"
+
+  # =============================================================================
+  # MONITORING INFORMATION
+  # =============================================================================
+
+  CloudWatchDashboardURL:
+    Description: "CloudWatch Dashboard URL"
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${AppName}-${AppStage}-Dashboard"
+
+  ECSConsoleURL:
+    Description: "ECS Console URL"
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/ecs/home?region=${AWS::Region}#/clusters/${ECSCluster}/services"
+
+  # =============================================================================
+  # DEPLOYMENT VERIFICATION COMMANDS
+  # =============================================================================
+
+  VerificationCommands:
+    Description: "Commands to verify deployment"
+    Value: !Sub |
+      # Health check commands:
+      curl -f ${ApplicationLoadBalancer.DNSName}/
+      curl -f ${ApplicationLoadBalancer.DNSName}/docs
+      curl -f ${ApplicationLoadBalancer.DNSName}/api/jobs/health
+
+      # ECS service status:
+      aws ecs describe-services --cluster ${ECSCluster} --services bls-service salary-service fastapi-service streamlit-service scraping-service
+
+      # View logs:
+      aws logs describe-log-groups --log-group-name-prefix /ecs/${AppName}-${AppStage}

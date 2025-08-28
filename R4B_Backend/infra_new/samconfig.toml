@@ -1,0 +1,41 @@
+version = 0.1
+
+[demo.deploy.parameters]
+stack_name = "R4B-OpActive-App-Demo"
+resolve_s3 = true
+s3_prefix = "R4B-OpActive-App-Demo"
+region = "us-west-1"
+confirm_changeset = true
+capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
+parameter_overrides = "AppName=\"R4B-OpActive\" AppStage=\"demo\" VPCStackName=\"R4B-VPC-Main\" VPCStackAppName=\"R4B-VPC\" VPCStackStage=\"main\" ImageTag=\"latest\" OpenAIAPIKey=\"\" SalaryComPassword=\"Compensationnew2025!\" APIKey2Captcha=\"\""
+image_repositories = []
+
+[dev.deploy.parameters]
+stack_name = "R4B-OpActive-App-Dev"
+resolve_s3 = true
+s3_prefix = "R4B-OpActive-App-Dev"
+region = "us-west-1"
+confirm_changeset = true
+capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
+parameter_overrides = "AppName=\"R4B-OpActive\" AppStage=\"dev\" VPCStackName=\"R4B-VPC-Main\" VPCStackAppName=\"R4B-VPC\" VPCStackStage=\"main\" ImageTag=\"latest\" OpenAIAPIKey=\"\" SalaryComPassword=\"Compensationnew2025!\" APIKey2Captcha=\"\""
+image_repositories = []
+
+[staging.deploy.parameters]
+stack_name = "R4B-OpActive-App-Staging"
+resolve_s3 = true
+s3_prefix = "R4B-OpActive-App-Staging"
+region = "us-west-1"
+confirm_changeset = true
+capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
+parameter_overrides = "AppName=\"R4B-OpActive\" AppStage=\"staging\" VPCStackName=\"R4B-VPC-Main\" VPCStackAppName=\"R4B-VPC\" VPCStackStage=\"main\" ImageTag=\"latest\" OpenAIAPIKey=\"\" SalaryComPassword=\"\" APIKey2Captcha=\"\""
+image_repositories = []
+
+[prod.deploy.parameters]
+stack_name = "R4B-OpActive-App-Prod"
+resolve_s3 = true
+s3_prefix = "R4B-OpActive-App-Prod"
+region = "us-west-1"
+confirm_changeset = true
+capabilities = ["CAPABILITY_IAM", "CAPABILITY_NAMED_IAM"]
+parameter_overrides = "AppName=\"R4B-OpActive\" AppStage=\"prod\" VPCStackName=\"R4B-VPC-Main\" VPCStackAppName=\"R4B-VPC\" VPCStackStage=\"main\" ImageTag=\"latest\" OpenAIAPIKey=\"\" SalaryComPassword=\"\" APIKey2Captcha=\"\""
+image_repositories = []

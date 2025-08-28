@@ -1,0 +1,48 @@
+# Web Framework and API
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+streamlit==1.48.1
+
+# HTTP and Networking
+httpx==0.28.1
+requests==2.32.4
+
+# Data Validation and Models
+pydantic==2.11.7
+
+# AI and Language Processing
+langchain==0.3.27
+langgraph==0.6.5
+langchain-mcp-adapters==0.1.9
+dspy==3.0.1
+openai==1.99.9
+
+# Web Scraping and Automation
+selenium==4.35.0
+undetected-chromedriver==3.5.5
+beautifulsoup4==4.13.4
+lxml==6.0.0
+
+# CAPTCHA Solving
+2captcha-python==1.5.1
+
+# Data Processing
+pandas==2.3.1
+openpyxl==3.1.5
+
+# Text Processing and Fuzzy Matching
+RapidFuzz==3.13.0
+inflect==7.5.0
+
+# MCP (Model Context Protocol)
+fastmcp==2.11.3
+
+# Development and Testing (optional)
+pytest==8.4.1
+pytest-asyncio==1.1.0
+black==25.1.0
+flake8==7.3.0
+mypy==1.17.1
+
+# Environment and Configuration
+python-dotenv==1.1.1
