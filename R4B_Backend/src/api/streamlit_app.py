@@ -7,7 +7,7 @@ from datetime import datetime
 
 # Import centralized settings
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config.settings import settings
+# from config.settings import settings
 
 st.set_page_config(page_title="💼 Job Market Query Interface", layout="wide")
 st.title("💼 Automated Salary Insights System")
