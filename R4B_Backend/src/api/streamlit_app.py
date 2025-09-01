@@ -2,9 +2,10 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
+import os
 
 # Import centralized settings
-from config.settings import settings
+# from config.settings import settings
 
 st.set_page_config(page_title="💼 Job Market Query Interface", layout="wide")
 st.title("💼 Automated Salary Insights System")
@@ -88,7 +89,7 @@ if submit and user_input:
                 "max_results": 50
             }
             wf_response = requests.post(
-                f"{settings.fastapi_backend_url}/jobs/query",
+                f"{os.getenv('BACKEND_URL', 'http://0.0.0.0:0000')}/jobs/query",
                 json=request_data,
                 timeout=300
             )
