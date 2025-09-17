@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 # Import centralized settings
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from config.settings import settings
+
 st.set_page_config(page_title="💼 Job Market Query Interface", layout="wide")
 st.title("💼 Automated Salary Insights System")
 # Add some styling
@@ -81,7 +81,7 @@ if submit and user_input:
                 "max_results": 5
             }
             wf_response = requests.post(
-                f"{settings.fastapi_backend_url}/jobs/query",
+                "http://13.57.212.168:8000/jobs/query",
                 json=request_data,
                 timeout=300
             )
