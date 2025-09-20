@@ -1,15 +1,13 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime
 import os
-
-# Import centralized settings
-# from config.settings import settings
+import sys
+import uuid
+from datetime import datetime
 
 st.set_page_config(page_title="💼 Job Market Query Interface", layout="wide")
 st.title("💼 Automated Salary Insights System")
-
 # Add some styling
 st.markdown("""
 <style>
@@ -47,32 +45,32 @@ if 'missing_fields' not in st.session_state:
     st.session_state.missing_fields = []
 if 'current_query' not in st.session_state:
     st.session_state.current_query = ""
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
 # Input section
 st.markdown("**Enter your job search query with education and experience**")
 st.markdown("*Examples: 'Data Engineer in Mexico with Bachelor's degree and 5 years experience', 'Software Developer in New York with Master's degree and 3 years experience'*")
-
 # --- Simplified Chat UI ---
-st.markdown("## 💬 Job Market Query")
-
 # Display conversation history
 for role, msg in st.session_state.conversation:
     if role == "user":
         st.markdown(f"**You:** {msg}")
     else:
         st.markdown(f"**Bot:** {msg}")
-
 # Input box for user message
 if st.session_state.follow_up_question:
     user_input = st.text_input("Bot asks:", value="", placeholder=st.session_state.follow_up_question, key="followup_input")
 else:
     user_input = st.text_input("Type your job query:", value="", placeholder="e.g., HVAC Technician in Seattle with Bachelor's degree and 5 years experience", key="main_input")
-
 submit = st.button("Send")
-
 if submit and user_input:
     # Add user message to conversation
     st.session_state.conversation.append(("user", user_input))
-    if st.session_state.follow_up_question:
+    
+    # Capture if this is a follow-up response before clearing the flag
+    is_follow_up_response = st.session_state.follow_up_question is not None
+    
+    if is_follow_up_response:
         # Combine previous query and follow-up answer
         combined_query = f"{st.session_state.current_query} {user_input}"
         st.session_state.current_query = combined_query
@@ -81,12 +79,13 @@ if submit and user_input:
     else:
         query_to_send = user_input
         st.session_state.current_query = user_input
-
     with st.spinner("🤖 Bot is thinking..."):
         try:
             request_data = {
                 "query": query_to_send,
-                "max_results": 50
+                "max_results": 5,
+                "session_id": st.session_state.session_id,
+                "is_follow_up": is_follow_up_response
             }
             wf_response = requests.post(
                 f"{os.getenv('BACKEND_URL', 'http://0.0.0.0:0000')}/jobs/query",
@@ -100,7 +99,6 @@ if submit and user_input:
             st.session_state.workflow_data = workflow_data
             
             # Store workflow data for processing
-
             # If follow-up is needed, ask next question
             if workflow_data.get("needs_follow_up", False):
                 follow_up = workflow_data.get("follow_up_question", "Please provide more information.")
@@ -129,17 +127,15 @@ if submit and user_input:
             st.session_state.conversation.append(("bot", f"❌ Network Error: {str(e)}"))
         except Exception as e:
             st.session_state.conversation.append(("bot", f"❌ Failed to process: {e}"))
-
 # Optionally, add a "Reset Conversation" button
 if st.button("Reset Conversation"):
     st.session_state.conversation = []
     st.session_state.follow_up_question = None
     st.session_state.current_query = ""
     st.session_state.workflow_data = None
-
+    st.session_state.session_id = str(uuid.uuid4())
 # Get workflow data from session state
 workflow_data = st.session_state.get('workflow_data', None)
-
 # Structured Excel-Format Salary Data Section - Only show after workflow completion
 if workflow_data:
     results = workflow_data.get("results", {})
@@ -147,7 +143,7 @@ if workflow_data:
     table_data = results.get("table_data", [])
     structuring_status = results.get("structuring_status", "unknown")
     structuring_completed = results.get("structuring_completed", False)
-    workflow_status = workflow_data.get("status", "unknown")
+    workflow_status = workflow_data.get("workflow_status", workflow_data.get("status", "unknown"))
     
     # Only show structured data section when workflow is completed successfully
     if (workflow_status == "success" and 
@@ -155,42 +151,157 @@ if workflow_data:
         structuring_status == "success" and 
         table_data):
         
+        
         st.markdown("---")
         st.markdown("## 📊 Structured Salary Data (Excel Format)")
-        st.success(f"✅ Successfully processed {len(table_data)} salary data records")
-        
-        # Define column headers exactly matching the Excel format from job_structuring.py
+        # Define column headers with clear, flattened names
         excel_columns = [
             "Job Title",
-            "Market Average Per Annum", 
-            "Market Average Per Hour",
-            "Min Per Annum",
-            "Min Per Hour", 
-            "Max Per Annum",
-            "Max Per Hour",
+            "Market Average (Annual)",
+            "Market Average (Hourly)", 
+            "Min (Annual)",
+            "Min (Hourly)",
+            "Max (Annual)",
+            "Max (Hourly)",
             "Notes",
             "BLS National Average",
-            "Cost of Living",
-            "Last Updated"
+            "Cost of living compared to National Average",
+            "Last updated"
         ]
         
-        # Create DataFrame with the structured data
+        # Create DataFrame with the structured data using grouped columns
         if table_data and len(table_data) > 0:
-            # Ensure each row has the correct number of columns
-            formatted_rows = []
-            for row in table_data:
-                if len(row) < len(excel_columns):
-                    # Pad with empty strings if row is too short
-                    row.extend([""] * (len(excel_columns) - len(row)))
-                elif len(row) > len(excel_columns):
-                    # Truncate if row is too long
-                    row = row[:len(excel_columns)]
-                formatted_rows.append(row)
             
-            df_excel = pd.DataFrame(formatted_rows, columns=excel_columns)
+            # Check if this is the new salary table format (dictionary-based)
+            if isinstance(table_data[0], dict):
+                # New format: list of dictionaries with keys like 'job_title', 'market_average_annual', etc.
+                formatted_rows = []
+                
+                # Separate main job row from level rows
+                main_job_row = None
+                level_rows = []
+                
+                for row in table_data:
+                    if row.get('is_sub_row'):
+                        level_rows.append(row)
+                    else:
+                        main_job_row = row
+                
+                # Add main job row first
+                if main_job_row:
+                    formatted_rows.append([
+                        main_job_row.get('job_title', ''),  # Job Title
+                        '',  # Market Average Annual
+                        '',  # Market Average Hourly
+                        '',  # Min Annual
+                        '',  # Min Hourly
+                        '',  # Max Annual
+                        '',  # Max Hourly
+                        '',  # Notes
+                        main_job_row.get('bls_national_average', ''),  # BLS National Average
+                        main_job_row.get('cost_of_living', ''),  # Cost of Living
+                        main_job_row.get('last_updated', '')  # Last Updated
+                    ])
+                
+                # Add level rows
+                for row in level_rows:
+                    formatted_row = [
+                        row.get('job_title', ''),  # Job Title (Level 1, Level 2, etc.)
+                        row.get('market_average_annual', ''),  # Market Average Annual
+                        row.get('market_average_hourly', ''),  # Market Average Hourly
+                        row.get('min_annual', ''),  # Min Annual
+                        row.get('min_hourly', ''),  # Min Hourly
+                        row.get('max_annual', ''),  # Max Annual
+                        row.get('max_hourly', ''),  # Max Hourly
+                        row.get('notes', ''),  # Notes
+                        '',  # BLS National Average (empty for levels)
+                        '',  # Cost of Living (empty for levels)
+                        row.get('last_updated', '')  # Last Updated
+                    ]
+                    formatted_rows.append(formatted_row)
+            else:
+                # Old format: list of lists
+                formatted_rows = []
+                for row in table_data:
+                    if len(row) >= 7:  # Ensure we have enough data
+                        # Reorganize data for grouped columns with better spacing
+                        # Original: [Job Title, Market Avg Annual, Market Avg Hourly, Min Annual, Min Hourly, Max Annual, Max Hourly, Notes, BLS, Cost of Living, Last Updated]
+                        # New: [Job Title, Market Avg (Annual|Hourly), Min (Annual|Hourly), Max (Annual|Hourly), Notes, BLS, Cost of Living, Last Updated]
+                        
+                        # Use separate columns for annual and hourly values to match the new format
+                        grouped_row = [
+                            row[0],  # Job Title
+                            row[1] if len(row) > 1 else "",  # Market Average Annual
+                            row[2] if len(row) > 2 else "",  # Market Average Hourly
+                            row[3] if len(row) > 3 else "",  # Min Annual
+                            row[4] if len(row) > 4 else "",  # Min Hourly
+                            row[5] if len(row) > 5 else "",  # Max Annual
+                            row[6] if len(row) > 6 else "",  # Max Hourly
+                            row[7] if len(row) > 7 else "",  # Notes
+                            row[8] if len(row) > 8 else "",  # BLS National Average
+                            row[9] if len(row) > 9 else "",  # Cost of Living
+                            row[10] if len(row) > 10 else ""  # Last Updated
+                        ]
+                        formatted_rows.append(grouped_row)
+                    else:
+                        # Fallback for incomplete rows
+                        grouped_row = [row[0] if len(row) > 0 else ""] + [""] * (len(excel_columns) - 1)
+                        formatted_rows.append(grouped_row)
             
-            # Display the Excel-format table
+            # Use flattened column names for better Streamlit display
+            flattened_columns = [
+                'Job Title',
+                'Market Average (Annual)',
+                'Market Average (Hourly)', 
+                'Min (Annual)',
+                'Min (Hourly)',
+                'Max (Annual)',
+                'Max (Hourly)',
+                'Notes',
+                'BLS National Average',
+                'Cost of living compared to National Average',
+                'Last updated'
+            ]
+            
+            df_excel = pd.DataFrame(formatted_rows, columns=flattened_columns)
+            
+            # Display the Excel-format table with custom styling
             st.markdown("### 💼 Salary Analysis Table")
+            
+            # Add custom CSS for better table formatting
+            st.markdown("""
+            <style>
+            .salary-table {
+                font-family: 'Arial', sans-serif;
+                border-collapse: collapse;
+                width: 100%;
+            }
+            .salary-table th {
+                background-color: #4A90E2;
+                color: white;
+                font-weight: bold;
+                text-align: center;
+                padding: 8px;
+                border: 1px solid #ddd;
+            }
+            .salary-table td {
+                font-size: 0.9em;
+                padding: 8px;
+                border: 1px solid #ddd;
+                text-align: right;
+            }
+            .salary-table td:first-child {
+                text-align: left;
+            }
+            .salary-table tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            .salary-table tr:hover {
+                background-color: #f5f5f5;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
             st.dataframe(df_excel, use_container_width=True)
             
             # Download button for Excel format data
@@ -205,19 +316,32 @@ if workflow_data:
             # Show key metrics
             col1, col2, col3 = st.columns(3)
             with col1:
-                avg_market = df_excel["Market Average Per Hour"].apply(
-                    lambda x: float(x.replace('$', '').replace(',', '')) if isinstance(x, str) and x.startswith('$') else 0
-                ).mean()
-                if avg_market > 0:
-                    st.metric("Avg Market Rate/Hour", f"${avg_market:.2f}")
+                # Extract hourly rates from the Market Average Hourly column
+                try:
+                    hourly_column = 'Market Average (Hourly)'
+                    if hourly_column in df_excel.columns:
+                        hourly_values = df_excel[hourly_column].apply(lambda x: float(str(x).replace('$', '').replace(',', '')) if str(x).replace('$', '').replace(',', '').replace('.', '').isdigit() else 0)
+                        avg_market = hourly_values.mean()
+                        if avg_market > 0:
+                            st.metric("Avg Market Rate/Hour", f"${avg_market:.2f}")
+                        else:
+                            st.metric("Avg Market Rate/Hour", "N/A")
+                    else:
+                        st.metric("Avg Market Rate/Hour", "N/A")
+                except Exception as e:
+                    st.metric("Avg Market Rate/Hour", "N/A")
             
             with col2:
-                unique_titles = df_excel["Job Title"].nunique()
-                st.metric("Unique Job Titles", unique_titles)
+                unique_titles = df_excel['Job Title'].nunique()
+                st.metric("Experience Levels", unique_titles)
             
             with col3:
-                has_bls_data = (df_excel["BLS National Average"] != "").sum()
-                st.metric("Records with BLS Data", has_bls_data)
+                bls_column = 'BLS National Average'
+                if bls_column in df_excel.columns:
+                    has_bls_data = (df_excel[bls_column] != "").sum()
+                    st.metric("Records with BLS Data", has_bls_data)
+                else:
+                    st.metric("Records with BLS Data", 0)
             
         else:
             st.warning("⚠️ No table data available to display")
@@ -241,20 +365,15 @@ if workflow_data:
         st.markdown("---") 
         st.markdown("## 📊 Structured Salary Data (Excel Format)")
         st.info("📊 No structured salary data available. The workflow completed but no salary data was processed.")
-
 # No workflow data available yet
 else:
     pass  # Don't show anything until there's workflow data
-
 # Workflow data processing logic
-
 if workflow_data:
     server_message = workflow_data.get('message', 'Query processed')
     server_status = workflow_data.get('status', 'unknown')
-
     all_validation_errors = []
     parsing_suggestions = []
-
     # Check for validation messages at different levels
     # 1. Direct top-level validation (from parsing server)
     if 'query_info' in workflow_data:
@@ -272,7 +391,6 @@ if workflow_data:
         suggestions = workflow_data.get('suggestions', [])
         if suggestions:
             parsing_suggestions.extend(suggestions)
-
     # 2. Check validation in results
     if 'results' in workflow_data and 'validation' in workflow_data['results']:
         validation_info = workflow_data['results']['validation']
@@ -283,8 +401,6 @@ if workflow_data:
             suggestions = validation_info.get('suggestions', [])
             if suggestions:
                 parsing_suggestions.extend(suggestions)
-
-
     # Show errors and suggestions
     message = workflow_data.get('message', '').strip()
     
@@ -296,14 +412,11 @@ if workflow_data:
         message = workflow_data.get('message', '').strip()
         # Always show the backend's exact error message
         st.error(f"❌ {message}")
-
         # Do not show suggestions for any error
-
         # Show any additional validation errors
         for error in all_validation_errors:
             if error and error != message:
                 st.error(f"❌ Additional validation error: {error}")
-
     elif server_status == 'success':
         pass  # Do not display the success message at all
     elif server_status in ['error', 'failed', 'validation_failed']:
@@ -312,7 +425,3 @@ if workflow_data:
         st.warning(f"⚠️ {server_message}")
     else:
         st.info(f"ℹ️ {server_message}")
-
-    # Raw Debug View
-    # with st.expander("🔧 Raw Server Response (for debugging)"):
-    #     st.json(workflow_data)
